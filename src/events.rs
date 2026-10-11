@@ -464,17 +464,17 @@ pub struct ChannelInfoData {
     pub secret: [u8; CHANNEL_SECRET_LEN],
 }
 
-/// Advertisement data
+/// A known contact advertised again; the companion message carries only its public key
 #[derive(Debug, Clone)]
 pub struct AdvertisementData {
-    /// Advertiser public key prefix
-    pub prefix: [u8; 6],
-    /// Advertisement name
-    pub name: String,
-    /// Latitude in microdegrees
-    pub lat: i32,
-    /// Longitude in microdegrees
-    pub lon: i32,
+    /// Advertiser public key
+    pub public_key: [u8; PUBLIC_KEY_LEN],
+}
+
+impl From<[u8; PUBLIC_KEY_LEN]> for AdvertisementData {
+    fn from(public_key: [u8; PUBLIC_KEY_LEN]) -> Self {
+        Self { public_key }
+    }
 }
 
 /// Path update data
@@ -774,9 +774,9 @@ pub struct MeshPacketHeader {
 
 /// Node identity broadcast in a raw ADVERT payload overheard on the mesh.
 ///
-/// Unlike [`AdvertisementData`] (the companion's own summarized push, keyed
-/// by a 6-byte prefix), this carries the full advertisement as it appears
-/// on air, including the advertiser's full public key and signature.
+/// Unlike [`AdvertisementData`] (the companion's own push, which carries only
+/// the advertiser's public key), this carries the full advertisement as it
+/// appears on air, including the advertiser's full public key and signature.
 #[derive(Debug, Clone)]
 pub struct RawAdvertisement {
     /// Advertiser's full 32-byte public key
@@ -1652,18 +1652,6 @@ mod tests {
         let cloned = info.clone();
         assert_eq!(cloned.channel_idx, 1);
         assert_eq!(cloned.name, "General");
-    }
-
-    #[test]
-    fn test_advertisement_data_debug() {
-        let advert = AdvertisementData {
-            prefix: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
-            name: "Node1".to_string(),
-            lat: 37774900,
-            lon: -122419400,
-        };
-        let debug_str = format!("{:?}", advert);
-        assert!(debug_str.contains("Node1"));
     }
 
     #[test]
