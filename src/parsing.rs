@@ -1187,11 +1187,16 @@ pub fn parse_packet_stats(data: &[u8]) -> Result<PacketStatsData> {
 
 /// Parse an [`AdvertisementData`] from a `PacketType::Advertisement` payload.
 ///
-/// Returns an error if the payload is too short.
+/// Returns an error if the payload is not exactly [`PUBLIC_KEY_LEN`] bytes.
 pub fn parse_advertisement(payload: &[u8]) -> Result<AdvertisementData> {
-    read_bytes(payload, 0)
-        .map(AdvertisementData::from)
-        .map_err(|_| Error::protocol("Advertisement payload too short"))
+    if payload.len() != PUBLIC_KEY_LEN {
+        return Err(Error::protocol(format!(
+            "Advertisement payload must be {} bytes, got {}",
+            PUBLIC_KEY_LEN,
+            payload.len()
+        )));
+    }
+    read_bytes(payload, 0).map(AdvertisementData::from)
 }
 
 /// Parse a [`PathUpdateData`] from a `PacketType::PathUpdate` payload.
@@ -2758,6 +2763,11 @@ mod tests {
         let key: [u8; PUBLIC_KEY_LEN] = std::array::from_fn(|i| i as u8);
         let advert = parse_advertisement(&key).unwrap();
         assert_eq!(advert.public_key, key);
+    }
+
+    #[test]
+    fn test_parse_advertisement_too_long() {
+        assert!(parse_advertisement(&[0; PUBLIC_KEY_LEN + 1]).is_err());
     }
 
     // ========== parse_path_update tests ==========
