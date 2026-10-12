@@ -120,14 +120,14 @@ impl Destination {
     pub fn public_key(&self) -> Option<PublicKey> {
         match self {
             Destination::Bytes(b) if b.len() >= PUBLIC_KEY_LEN => {
-                let mut key = [0u8; PUBLIC_KEY_LEN];
+                let mut key: PublicKey = [0; PUBLIC_KEY_LEN];
                 key.copy_from_slice(&b[..PUBLIC_KEY_LEN]);
                 Some(key)
             }
             Destination::Hex(s) => {
                 let bytes = hex_decode(s).ok()?;
                 if bytes.len() >= PUBLIC_KEY_LEN {
-                    let mut key = [0u8; PUBLIC_KEY_LEN];
+                    let mut key: PublicKey = [0; PUBLIC_KEY_LEN];
                     key.copy_from_slice(&bytes[..PUBLIC_KEY_LEN]);
                     Some(key)
                 } else {
@@ -1476,7 +1476,7 @@ mod tests {
         AUTO_ADD_CHAT, AUTO_ADD_OVERWRITE_OLDEST, AUTO_ADD_REPEATER, AUTO_ADD_ROOM_SERVER,
     };
 
-    const KEY: [u8; PUBLIC_KEY_LEN] = [7; PUBLIC_KEY_LEN];
+    const KEY: PublicKey = [7; PUBLIC_KEY_LEN];
 
     // ========== Destination Tests ==========
 
