@@ -2760,7 +2760,7 @@ mod tests {
 
     #[test]
     fn test_parse_advertisement() {
-        let key: [u8; PUBLIC_KEY_LEN] = std::array::from_fn(|i| i as u8);
+        let key: PublicKey = std::array::from_fn(|i| i as u8);
         let advert = parse_advertisement(&key).unwrap();
         assert_eq!(advert.public_key, key);
     }
@@ -2780,7 +2780,7 @@ mod tests {
 
     #[test]
     fn test_parse_path_update() {
-        let key: [u8; PUBLIC_KEY_LEN] = std::array::from_fn(|i| i as u8);
+        let key: PublicKey = std::array::from_fn(|i| i as u8);
         let update = parse_path_update(&key).unwrap();
         assert_eq!(update.public_key, key);
     }
