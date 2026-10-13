@@ -1404,7 +1404,7 @@ pub fn parse_login_success(payload: &[u8]) -> Result<LoginSuccessData> {
     }
 
     Ok(LoginSuccessData {
-        permissions: payload[0],
+        permissions: payload[0], // jonesy:allow(bounds) -- checked >= LOGIN_SUCCESS_MIN_LEN above
         pubkey_prefix: read_bytes(payload, LOGIN_SUCCESS_PREFIX_OFFSET)?,
         server_timestamp: read_u32_le(payload, LOGIN_SUCCESS_SERVER_TIMESTAMP_OFFSET).ok(),
         acl_permissions: payload.get(LOGIN_SUCCESS_ACL_PERMISSIONS_OFFSET).copied(),
