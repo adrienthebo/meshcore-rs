@@ -1394,8 +1394,10 @@ const LOGIN_SUCCESS_FIRMWARE_VER_LEVEL_OFFSET: usize = 12;
 
 /// Parse [`LoginSuccessData`] from a `PacketType::LoginSuccess` payload.
 ///
-/// Fields beyond the public key prefix are `None` when the payload is too
-/// short to contain them.
+/// The LoginSuccess frame supports a variable number of fields based on
+/// the companion client version. In contrast to some other frame parsers
+/// the login success parser allows trailing bytes in case the API changes
+/// again.
 pub fn parse_login_success(payload: &[u8]) -> Result<LoginSuccessData> {
     if payload.len() < LOGIN_SUCCESS_MIN_LEN {
         return Err(Error::protocol("LoginSuccess payload too short"));
@@ -1416,15 +1418,21 @@ pub fn parse_login_success(payload: &[u8]) -> Result<LoginSuccessData> {
 //
 // Firmware layout: [reserved: 1][pubkey_prefix: 6]
 
-/// Minimum length for a LoginFailed payload (reserved + prefix).
-const LOGIN_FAILED_MIN_LEN: usize = 7;
+/// Length of a LoginFailed payload (reserved + prefix).
+const LOGIN_FAILED_LEN: usize = 7;
 /// Offset of the public key prefix in a LoginFailed payload.
 const LOGIN_FAILED_PREFIX_OFFSET: usize = 1;
 
 /// Parse the public key prefix from a `PacketType::LoginFailed` payload.
+///
+/// Returns an error if the payload is not exactly `LOGIN_FAILED_LEN` bytes.
 pub fn parse_login_failed(payload: &[u8]) -> Result<[u8; 6]> {
-    if payload.len() < LOGIN_FAILED_MIN_LEN {
-        return Err(Error::protocol("LoginFailed payload too short"));
+    if payload.len() != LOGIN_FAILED_LEN {
+        return Err(Error::protocol(format!(
+            "LoginFailed payload must be {} bytes, got {}",
+            LOGIN_FAILED_LEN,
+            payload.len()
+        )));
     }
 
     read_bytes(payload, LOGIN_FAILED_PREFIX_OFFSET)
@@ -3015,12 +3023,30 @@ mod tests {
         assert_eq!(login.firmware_ver_level, Some(0x01));
     }
 
+    #[test]
+    fn test_parse_login_success_ignores_trailing_bytes() {
+        let mut data = vec![0x01, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        data.extend_from_slice(&1_700_000_000u32.to_le_bytes());
+        data.extend_from_slice(&[0x03, 0x01, 0xEE, 0xFF]);
+        let login = parse_login_success(&data).unwrap();
+        assert_eq!(login.permissions, 1);
+        assert_eq!(login.pubkey_prefix, [0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
+        assert_eq!(login.server_timestamp, Some(1_700_000_000));
+        assert_eq!(login.acl_permissions, Some(0x03));
+        assert_eq!(login.firmware_ver_level, Some(0x01));
+    }
+
     // ========== parse_login_failed tests ==========
 
     #[test]
     fn test_parse_login_failed_too_short() {
         assert!(parse_login_failed(&[]).is_err());
         assert!(parse_login_failed(&[0; 6]).is_err());
+    }
+
+    #[test]
+    fn test_parse_login_failed_too_long() {
+        assert!(parse_login_failed(&[0; 8]).is_err());
     }
 
     #[test]
