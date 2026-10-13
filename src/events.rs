@@ -429,11 +429,14 @@ pub struct MsgSentInfo {
 pub struct LoginSuccessData {
     /// 6-byte public key prefix of the server that accepted the login
     pub pubkey_prefix: [u8; 6],
-    /// Permissions granted by the server (1 = admin, 2 = read-only guest, 0 otherwise)
+    /// Summary of the role granted by the server: 1 = admin, 2 = guest (room
+    /// servers only), 0 otherwise
     pub permissions: u8,
     /// Server clock timestamp
     pub server_timestamp: Option<u32>,
-    /// ACL permissions
+    /// The client's ACL permissions on the server. The low 2 bits are the role
+    /// (0 = guest, 1 = read-only, 2 = read-write, 3 = admin); the upper bits
+    /// are flags specific to the server type.
     pub acl_permissions: Option<u8>,
     /// Server firmware version level
     pub firmware_ver_level: Option<u8>,

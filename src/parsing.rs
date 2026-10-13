@@ -1366,60 +1366,68 @@ pub fn parse_status_response(payload: &[u8]) -> Result<StatusResponseFrame> {
     })
 }
 
-// --- LoginSuccess / LoginFailed payload layout ---
+// --- LoginSuccess payload layout ---
 //
-// Firmware layout (examples/companion_radio/MyMesh.cpp, onContactResponse):
-//   LoginSuccess: [permissions: 1][pubkey_prefix: 6][server_timestamp: 4]
-//                 [acl_permissions: 1][firmware_ver_level: 1]
-//   LoginFailed:  [reserved: 1][pubkey_prefix: 6]
+// Firmware layout: [permissions: 1][pubkey_prefix: 6][timestamp: 4]
+// [acl_permissions: 1][firmware_ver_level: 1]
 //
-// The trailing LoginSuccess fields were added one at a time, so the payload
-// length depends on the companion firmware release:
+// The trailing fields were added one at a time, so the payload length
+// depends on the companion firmware release:
 //   7 bytes:  before companion-v1.7.0, or a legacy "OK" server reply on any release
 //   11 bytes: companion-v1.7.0 adds server_timestamp (MeshCore 0e90b731)
 //   12 bytes: companion-v1.7.3 adds acl_permissions (MeshCore 7947e8a2)
 //   13 bytes: companion-v1.9.0 adds firmware_ver_level (MeshCore 418ae08b)
-// None of these changes bumped FIRMWARE_VER_CODE (5 before and after
-// server_timestamp, 7 before and after acl_permissions and
-// firmware_ver_level), so the payload length is the only reliable signal of
-// which fields are present.
+//
+// None of these changes bumped FIRMWARE_VER_CODE so the payload length is the only
+// reliable signal of which fields are present.
 
-/// Minimum length for a LoginSuccess or LoginFailed payload.
-const LOGIN_MIN_LEN: usize = 7;
-/// Offset of the public key prefix in a LoginSuccess or LoginFailed payload.
-const LOGIN_PREFIX_OFFSET: usize = 1;
+/// Minimum length for a LoginSuccess payload (permissions + prefix).
+const LOGIN_SUCCESS_MIN_LEN: usize = 7;
+/// Offset of the public key prefix in a LoginSuccess payload.
+const LOGIN_SUCCESS_PREFIX_OFFSET: usize = 1;
 /// Offset of the server timestamp in a LoginSuccess payload.
-const LOGIN_SERVER_TIMESTAMP_OFFSET: usize = 7;
+const LOGIN_SUCCESS_SERVER_TIMESTAMP_OFFSET: usize = 7;
 /// Offset of the ACL permissions in a LoginSuccess payload.
-const LOGIN_ACL_PERMISSIONS_OFFSET: usize = 11;
+const LOGIN_SUCCESS_ACL_PERMISSIONS_OFFSET: usize = 11;
 /// Offset of the firmware version level in a LoginSuccess payload.
-const LOGIN_FIRMWARE_VER_LEVEL_OFFSET: usize = 12;
+const LOGIN_SUCCESS_FIRMWARE_VER_LEVEL_OFFSET: usize = 12;
 
 /// Parse [`LoginSuccessData`] from a `PacketType::LoginSuccess` payload.
 ///
 /// Fields beyond the public key prefix are `None` when the payload is too
 /// short to contain them.
 pub fn parse_login_success(payload: &[u8]) -> Result<LoginSuccessData> {
-    if payload.len() < LOGIN_MIN_LEN {
+    if payload.len() < LOGIN_SUCCESS_MIN_LEN {
         return Err(Error::protocol("LoginSuccess payload too short"));
     }
 
     Ok(LoginSuccessData {
-        pubkey_prefix: read_bytes(payload, LOGIN_PREFIX_OFFSET)?,
         permissions: payload[0],
-        server_timestamp: read_u32_le(payload, LOGIN_SERVER_TIMESTAMP_OFFSET).ok(),
-        acl_permissions: payload.get(LOGIN_ACL_PERMISSIONS_OFFSET).copied(),
-        firmware_ver_level: payload.get(LOGIN_FIRMWARE_VER_LEVEL_OFFSET).copied(),
+        pubkey_prefix: read_bytes(payload, LOGIN_SUCCESS_PREFIX_OFFSET)?,
+        server_timestamp: read_u32_le(payload, LOGIN_SUCCESS_SERVER_TIMESTAMP_OFFSET).ok(),
+        acl_permissions: payload.get(LOGIN_SUCCESS_ACL_PERMISSIONS_OFFSET).copied(),
+        firmware_ver_level: payload
+            .get(LOGIN_SUCCESS_FIRMWARE_VER_LEVEL_OFFSET)
+            .copied(),
     })
 }
 
+// --- LoginFailed payload layout ---
+//
+// Firmware layout: [reserved: 1][pubkey_prefix: 6]
+
+/// Minimum length for a LoginFailed payload (reserved + prefix).
+const LOGIN_FAILED_MIN_LEN: usize = 7;
+/// Offset of the public key prefix in a LoginFailed payload.
+const LOGIN_FAILED_PREFIX_OFFSET: usize = 1;
+
 /// Parse the public key prefix from a `PacketType::LoginFailed` payload.
 pub fn parse_login_failed(payload: &[u8]) -> Result<[u8; 6]> {
-    if payload.len() < LOGIN_MIN_LEN {
+    if payload.len() < LOGIN_FAILED_MIN_LEN {
         return Err(Error::protocol("LoginFailed payload too short"));
     }
 
-    read_bytes(payload, LOGIN_PREFIX_OFFSET)
+    read_bytes(payload, LOGIN_FAILED_PREFIX_OFFSET)
 }
 
 // --- TelemetryResponse payload layout ---
@@ -2953,7 +2961,7 @@ mod tests {
         assert_eq!(frame.status.battery_mv, 3700);
     }
 
-    // ========== parse_login_success / parse_login_failed tests ==========
+    // ========== parse_login_success tests ==========
 
     #[test]
     fn test_parse_login_success_too_short() {
@@ -3006,6 +3014,8 @@ mod tests {
         assert_eq!(login.acl_permissions, Some(0x03));
         assert_eq!(login.firmware_ver_level, Some(0x01));
     }
+
+    // ========== parse_login_failed tests ==========
 
     #[test]
     fn test_parse_login_failed_too_short() {
