@@ -131,6 +131,10 @@ pub enum EventPayload {
     PathUpdate(PathUpdateData),
     /// ACK
     Ack { tag: [u8; 4] },
+    /// Login accepted by a room server or repeater
+    LoginSuccess(LoginSuccessData),
+    /// Login rejected by a room server or repeater
+    LoginFailed { pubkey_prefix: [u8; 6] },
     /// Trace data
     TraceData(TraceInfo),
     /// Telemetry response (raw LPP data)
@@ -418,6 +422,21 @@ pub struct MsgSentInfo {
     pub expected_ack: [u8; 4],
     /// Suggested timeout in milliseconds
     pub suggested_timeout: u32,
+}
+
+/// Login success data
+#[derive(Debug, Clone)]
+pub struct LoginSuccessData {
+    /// 6-byte public key prefix of the server that accepted the login
+    pub pubkey_prefix: [u8; 6],
+    /// Permissions granted by the server (1 = admin, 2 = read-only guest, 0 otherwise)
+    pub permissions: u8,
+    /// Server clock timestamp
+    pub server_timestamp: Option<u32>,
+    /// ACL permissions
+    pub acl_permissions: Option<u8>,
+    /// Server firmware version level
+    pub firmware_ver_level: Option<u8>,
 }
 
 /// Status data from a device
