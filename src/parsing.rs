@@ -1971,6 +1971,65 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_contact_path_with_zero_hop_hash() {
+        let mut data = vec![0u8; CONTACT_LEN_WITH_LASTMOD];
+        // path_len: 2 hops of 1-byte hashes
+        data[34] = 2;
+        // MeshCore reserves 0x00 and 0xFF as the first public key byte, so a
+        // 1-byte hop hash of 0x00 should not occur; this is a safety check
+        // that the path is read by length, not up to a zero byte.
+        data[35..37].copy_from_slice(&[0x00, 0x5A]);
+
+        let contact = parse_contact(&data).unwrap();
+        assert_eq!(contact.out_path, vec![0x00, 0x5A]);
+    }
+
+    #[test]
+    fn test_parse_contact_path_with_two_byte_hashes() {
+        let mut data = vec![0u8; CONTACT_LEN_WITH_LASTMOD];
+        // path_len: 2 hops of 2-byte hashes (bits 6-7 = 0b01 -> +1 = 2)
+        data[34] = 0b01_000010;
+        data[35..39].copy_from_slice(&[0x12, 0x00, 0x00, 0x34]);
+
+        let contact = parse_contact(&data).unwrap();
+        assert_eq!(contact.out_path, vec![0x12, 0x00, 0x00, 0x34]);
+    }
+
+    #[test]
+    fn test_parse_contact_path_with_three_byte_hashes() {
+        let mut data = vec![0u8; CONTACT_LEN_WITH_LASTMOD];
+        // path_len: 2 hops of 3-byte hashes (bits 6-7 = 0b10 -> +1 = 3)
+        data[34] = 0b10_000010;
+        data[35..41].copy_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
+        // Bytes past the path are not part of it
+        data[41] = 0x07;
+
+        let contact = parse_contact(&data).unwrap();
+        assert_eq!(contact.out_path, vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
+    }
+
+    #[test]
+    fn test_parse_contact_unknown_path_is_empty() {
+        let mut data = vec![0u8; CONTACT_LEN_WITH_LASTMOD];
+        data[34] = 0xFF;
+        data[35] = 0x0A;
+
+        let contact = parse_contact(&data).unwrap();
+        assert_eq!(contact.path_len, -1);
+        assert!(contact.out_path.is_empty());
+    }
+
+    #[test]
+    fn test_parse_contact_path_too_long_errors() {
+        let mut data = vec![0u8; CONTACT_LEN_WITH_LASTMOD];
+        // path_len: 63 hops of 3-byte hashes = 189 bytes, past the 64-byte field
+        data[34] = 0xBF;
+
+        let err = parse_contact(&data).unwrap_err();
+        assert!(err.to_string().contains("Contact path too long: 189 bytes"));
+    }
+
+    #[test]
     fn test_parse_contact_too_short() {
         let data = vec![0u8; 100];
         assert!(parse_contact(&data).is_err());
