@@ -485,8 +485,13 @@ pub struct StatusData {
     pub direct_sent: u32,
     /// SNR (divided by 4)
     pub snr: f32,
-    /// Duplicate packet count
+    /// Duplicate packet count (`direct_dups + flood_dups`)
+    #[deprecated(note = "use `direct_dups` and `flood_dups`")]
     pub dup_count: u32,
+    /// Duplicate direct packets received (wraps at 65535)
+    pub direct_dups: u16,
+    /// Duplicate flood packets received (wraps at 65535)
+    pub flood_dups: u16,
     /// RX airtime (seconds)
     pub rx_airtime: u32,
     /// Sender public key prefix

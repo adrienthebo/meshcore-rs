@@ -347,6 +347,7 @@ pub fn parse_device_info(data: &[u8]) -> Result<DeviceInfoData> {
 }
 
 /// Parse status response (52+ bytes)
+#[allow(deprecated)] // populates StatusData::dup_count
 pub fn parse_status(data: &[u8], sender_prefix: [u8; 6]) -> Result<StatusData> {
     if data.len() < 52 {
         return Err(Error::protocol(format!(
@@ -369,7 +370,9 @@ pub fn parse_status(data: &[u8], sender_prefix: [u8; 6]) -> Result<StatusData> {
     let snr_raw = read_i16_le(data, 42)?;
     let snr = snr_raw as f32 / 4.0;
 
-    let dup_count = read_u32_le(data, 36)?;
+    let direct_dups = read_u16_le(data, 44)?;
+    let flood_dups = read_u16_le(data, 46)?;
+    let dup_count = u32::from(direct_dups) + u32::from(flood_dups);
     let rx_airtime = read_u32_le(data, 48)?;
 
     Ok(StatusData {
@@ -385,6 +388,8 @@ pub fn parse_status(data: &[u8], sender_prefix: [u8; 6]) -> Result<StatusData> {
         direct_sent,
         snr,
         dup_count,
+        direct_dups,
+        flood_dups,
         rx_airtime,
         sender_prefix,
     })
@@ -1959,6 +1964,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // checks StatusData::dup_count
     fn test_parse_status() {
         let sender = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06];
         let status = parse_status(&repeater_stats_bytes(), sender).unwrap();
@@ -1974,6 +1980,9 @@ mod tests {
         assert_eq!(status.flood_sent, 100);
         assert_eq!(status.direct_sent, 400);
         assert_eq!(status.snr, -7.5);
+        assert_eq!(status.dup_count, 16);
+        assert_eq!(status.direct_dups, 7);
+        assert_eq!(status.flood_dups, 9);
         assert_eq!(status.rx_airtime, 1800);
         assert_eq!(status.sender_prefix, sender);
     }
