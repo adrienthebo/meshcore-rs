@@ -633,6 +633,32 @@ mod tests {
         (reader, dispatcher)
     }
 
+    /// A `RepeaterStats` (simple_repeater/MyMesh.h) as the firmware sends
+    /// it, with every field set to a distinct value.
+    fn repeater_stats_bytes() -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&4200u16.to_le_bytes()); // 0: batt_milli_volts
+        data.extend_from_slice(&5u16.to_le_bytes()); // 2: curr_tx_queue_len
+        data.extend_from_slice(&(-90i16).to_le_bytes()); // 4: noise_floor
+        data.extend_from_slice(&(-50i16).to_le_bytes()); // 6: last_rssi
+        data.extend_from_slice(&1000u32.to_le_bytes()); // 8: n_packets_recv
+        data.extend_from_slice(&500u32.to_le_bytes()); // 12: n_packets_sent
+        data.extend_from_slice(&3600u32.to_le_bytes()); // 16: total_air_time_secs
+        data.extend_from_slice(&86400u32.to_le_bytes()); // 20: total_up_time_secs
+        data.extend_from_slice(&100u32.to_le_bytes()); // 24: n_sent_flood
+        data.extend_from_slice(&400u32.to_le_bytes()); // 28: n_sent_direct
+        data.extend_from_slice(&700u32.to_le_bytes()); // 32: n_recv_flood
+        data.extend_from_slice(&300u32.to_le_bytes()); // 36: n_recv_direct
+        data.extend_from_slice(&0x0003u16.to_le_bytes()); // 40: err_events
+        data.extend_from_slice(&(-30i16).to_le_bytes()); // 42: last_snr x4
+        data.extend_from_slice(&7u16.to_le_bytes()); // 44: n_direct_dups
+        data.extend_from_slice(&9u16.to_le_bytes()); // 46: n_flood_dups
+        data.extend_from_slice(&1800u32.to_le_bytes()); // 48: total_rx_air_time_secs
+        data.extend_from_slice(&11u32.to_le_bytes()); // 52: n_recv_errors
+        assert_eq!(data.len(), 56);
+        data
+    }
+
     #[test]
     fn test_parse_raw_data_too_short() {
         assert!(parse_raw_data(&[]).is_err());
@@ -1853,12 +1879,7 @@ mod tests {
         data.push(0x00);
         // sender_prefix (6 bytes)
         data.extend_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
-        // status data (52 bytes)
-        let mut status_data = vec![0u8; 52];
-        status_data[0..2].copy_from_slice(&4200u16.to_le_bytes()); // battery_mv (4.2V)
-        status_data[2..4].copy_from_slice(&5u16.to_le_bytes()); // tx_queue_len
-        status_data[20..24].copy_from_slice(&86400u32.to_le_bytes()); // uptime
-        data.extend_from_slice(&status_data);
+        data.extend_from_slice(&repeater_stats_bytes());
 
         reader.handle_rx(data).await.unwrap();
 
@@ -1877,6 +1898,9 @@ mod tests {
                 assert_eq!(status.sender_prefix, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
                 assert_eq!(status.battery_mv, 4200);
                 assert_eq!(status.uptime, 86400);
+                assert_eq!(status.snr, -7.5);
+                assert_eq!(status.rx_airtime, 1800);
+                assert_eq!(status.recv_errors, Some(11));
             }
             _ => panic!("Expected Status payload"),
         }
@@ -2158,10 +2182,7 @@ mod tests {
         let mut data = vec![PacketType::BinaryResponse as u8];
         data.push(0x00); // subtype byte
         data.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]); // matching tag
-                                                           // Status data (52 bytes)
-        let mut status_data = vec![0u8; 52];
-        status_data[0..2].copy_from_slice(&100u16.to_le_bytes());
-        data.extend_from_slice(&status_data);
+        data.extend_from_slice(&repeater_stats_bytes());
 
         reader.handle_rx(data).await.unwrap();
 
@@ -2171,6 +2192,16 @@ mod tests {
             .unwrap();
 
         assert_eq!(event.event_type, EventType::StatusResponse);
+        assert_eq!(event.attributes.get("tag"), Some(&"01020304".to_string()));
+        match event.payload {
+            EventPayload::Status(status) => {
+                assert_eq!(status.battery_mv, 4200);
+                assert_eq!(status.snr, -7.5);
+                assert_eq!(status.rx_airtime, 1800);
+                assert_eq!(status.recv_errors, Some(11));
+            }
+            _ => panic!("Expected Status payload"),
+        }
     }
 
     #[tokio::test]
