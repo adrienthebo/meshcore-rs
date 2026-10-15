@@ -1354,11 +1354,19 @@ pub fn parse_contact_end_timestamp(payload: &[u8]) -> Result<Option<u32>> {
 }
 
 // --- StatusResponse payload layout ---
+//
+// Firmware layout: [reserved: 1][pubkey_prefix: 6][status data...]
 
+/// Length of the reserved byte at the start of a StatusResponse payload.
+const STATUS_RESP_RESERVED_LEN: usize = 1;
 /// Length of the sender prefix in a StatusResponse payload.
 const STATUS_RESP_PREFIX_LEN: usize = 6;
-/// Minimum length for a StatusResponse payload (prefix + status data).
-const STATUS_RESP_MIN_LEN: usize = 58;
+/// Offset of the sender prefix in a StatusResponse payload.
+const STATUS_RESP_PREFIX_OFFSET: usize = STATUS_RESP_RESERVED_LEN;
+/// Offset of the status data in a StatusResponse payload.
+const STATUS_RESP_DATA_OFFSET: usize = STATUS_RESP_PREFIX_OFFSET + STATUS_RESP_PREFIX_LEN;
+/// Minimum length for a StatusResponse payload (reserved + prefix + status data).
+const STATUS_RESP_MIN_LEN: usize = STATUS_RESP_DATA_OFFSET + 52;
 
 /// Parsed status response: sender prefix and status data.
 pub struct StatusResponseFrame {
@@ -1378,8 +1386,8 @@ pub fn parse_status_response(payload: &[u8]) -> Result<StatusResponseFrame> {
         return Err(Error::protocol("StatusResponse payload too short"));
     }
 
-    let sender_prefix: [u8; 6] = read_bytes(payload, 0)?;
-    let status = parse_status(&payload[STATUS_RESP_PREFIX_LEN..], sender_prefix)?;
+    let sender_prefix: [u8; 6] = read_bytes(payload, STATUS_RESP_PREFIX_OFFSET)?;
+    let status = parse_status(&payload[STATUS_RESP_DATA_OFFSET..], sender_prefix)?;
 
     Ok(StatusResponseFrame {
         sender_prefix,
@@ -3013,23 +3021,20 @@ mod tests {
     #[test]
     fn test_parse_status_response_too_short() {
         assert!(parse_status_response(&[]).is_err());
-        assert!(parse_status_response(&[0; 57]).is_err());
+        assert!(parse_status_response(&[0; 58]).is_err());
     }
 
     #[test]
     fn test_parse_status_response_valid() {
-        // Build a valid StatusResponse payload: 6-byte prefix + status data
-        let mut data = vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66]; // sender prefix
-                                                                 // Status data: battery_mv(2) + tx_queue(2) + noise(2) + rssi(2) + recv(4)
-                                                                 // + sent(4) + airtime(4) + uptime(4) + flood(4) + direct(4) + snr(1)
-                                                                 // + dup(4) + rx_airtime(4) + padding... = at least 52 bytes
-        let mut status_data = vec![0u8; 52];
-        // battery_mv = 3700 at offset 0
-        status_data[0..2].copy_from_slice(&3700u16.to_le_bytes());
-        data.extend_from_slice(&status_data);
+        // Build a valid StatusResponse payload: reserved + 6-byte prefix + status data
+        let mut data = vec![0x00]; // reserved
+        data.extend_from_slice(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66]); // sender prefix
+        data.extend_from_slice(&repeater_stats_bytes());
         let frame = parse_status_response(&data).unwrap();
         assert_eq!(frame.sender_prefix, [0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
-        assert_eq!(frame.status.battery_mv, 3700);
+        assert_eq!(frame.status.sender_prefix, frame.sender_prefix);
+        assert_eq!(frame.status.battery_mv, 4200);
+        assert_eq!(frame.status.recv_errors, Some(11));
     }
 
     // ========== parse_login_success tests ==========

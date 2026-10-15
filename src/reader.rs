@@ -1849,6 +1849,8 @@ mod tests {
         let mut receiver = dispatcher.receiver();
 
         let mut data = vec![PacketType::StatusResponse as u8];
+        // reserved
+        data.push(0x00);
         // sender_prefix (6 bytes)
         data.extend_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
         // status data (52 bytes)
@@ -1866,8 +1868,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(event.event_type, EventType::StatusResponse);
+        assert_eq!(
+            event.attributes.get("prefix"),
+            Some(&"010203040506".to_string())
+        );
         match event.payload {
             EventPayload::Status(status) => {
+                assert_eq!(status.sender_prefix, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
                 assert_eq!(status.battery_mv, 4200);
                 assert_eq!(status.uptime, 86400);
             }
