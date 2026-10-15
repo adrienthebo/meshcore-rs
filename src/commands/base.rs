@@ -76,6 +76,10 @@ const CMD_SEND_CHANNEL_DATA: u8 = 62;
 const PATH_LEN_FLOOD: u8 = 0xFF;
 /// A telemetry mode is a two-bit field of the byte `set_other_params` packs
 const TELEMETRY_MODE_MAX: u8 = 0b11;
+/// `txt_type` of a plain text message (`TXT_TYPE_PLAIN`)
+const TXT_TYPE_PLAIN: u8 = 0;
+/// `txt_type` of a CLI command (`TXT_TYPE_CLI_DATA`)
+const TXT_TYPE_CLI_DATA: u8 = 1;
 
 /// Destination type for commands
 #[derive(Debug, Clone)]
@@ -1055,7 +1059,42 @@ impl CommandHandler {
         msg: &str,
         timestamp: Option<u32>,
     ) -> Result<MsgSentInfo> {
-        let dest: Destination = dest.into();
+        self.send_txt_msg(dest.into(), TXT_TYPE_PLAIN, msg, timestamp)
+            .await
+    }
+
+    /// Send a CLI command to a repeater, room server or sensor
+    ///
+    /// Format: [CMD_SEND_TXT_MSG=0x02][txt_type=1][attempt][timestamp: u32][pubkey_prefix: 6][command]
+    ///
+    /// The companion sends no ACK for a command, so `expected_ack` is zero.
+    /// The reply arrives as a contact message with `txt_type` 1. A repeater
+    /// echoes an `xx|` command prefix at the start of its reply.
+    ///
+    /// The repeater ignores a command whose timestamp is lower than the last
+    /// one it saw from this client, and treats an equal timestamp as a retry
+    /// that gets no reply. From `companion-v1.12.0` the companion replaces
+    /// `timestamp` with its own clock; older companions send it unchanged.
+    pub async fn send_cmd(
+        &self,
+        dest: impl Into<Destination>,
+        cmd: &str,
+        timestamp: Option<u32>,
+    ) -> Result<MsgSentInfo> {
+        self.send_txt_msg(dest.into(), TXT_TYPE_CLI_DATA, cmd, timestamp)
+            .await
+    }
+
+    /// Send a text frame of the given `txt_type` to a contact
+    ///
+    /// Format: [CMD_SEND_TXT_MSG=0x02][txt_type][attempt][timestamp: u32][pubkey_prefix: 6][text]
+    async fn send_txt_msg(
+        &self,
+        dest: Destination,
+        txt_type: u8,
+        text: &str,
+        timestamp: Option<u32>,
+    ) -> Result<MsgSentInfo> {
         let prefix = dest.prefix()?;
         let ts = timestamp.unwrap_or_else(|| {
             std::time::SystemTime::now()
@@ -1064,11 +1103,11 @@ impl CommandHandler {
                 .as_secs() as u32
         });
 
-        // TXT_TYPE_PLAIN = 0, attempt = 0
-        let mut data = vec![CMD_SEND_TXT_MSG, 0x00, 0x00]; // Second 0x00 is "attempt"
+        // attempt = 0
+        let mut data = vec![CMD_SEND_TXT_MSG, txt_type, 0x00];
         data.extend_from_slice(&ts.to_le_bytes());
         data.extend_from_slice(&prefix);
-        data.extend_from_slice(msg.as_bytes());
+        data.extend_from_slice(text.as_bytes());
 
         let event = self
             .send_with_timeout(&data, Some(EventType::MsgSent), Duration::from_secs(10))
@@ -1077,13 +1116,13 @@ impl CommandHandler {
         if event.event_type == EventType::Error {
             return match event.payload {
                 EventPayload::String(error_message) => Err(Error::protocol(error_message)),
-                _ => Err(Error::protocol("Unexpected response to send_msg")),
+                _ => Err(Error::protocol("Unexpected response to text message")),
             };
         }
 
         match event.payload {
             EventPayload::MsgSent(info) => Ok(info),
-            _ => Err(Error::protocol("Unexpected response to send_msg")),
+            _ => Err(Error::protocol("Unexpected response to text message")),
         }
     }
 
@@ -3006,6 +3045,40 @@ mod tests {
             .send_binary_req(dest, BinaryReqType::Telemetry)
             .await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_cmd_wire_format() {
+        let (handler, mut rx, dispatcher) = create_test_handler();
+
+        let dispatcher_clone = dispatcher.clone();
+        tokio::spawn(async move {
+            let sent = rx.recv().await.unwrap();
+            assert_eq!(sent[0], CMD_SEND_TXT_MSG);
+            assert_eq!(sent[1], TXT_TYPE_CLI_DATA);
+            assert_eq!(sent[2], 0); // attempt
+            assert_eq!(&sent[3..7], &0x6543_2100u32.to_le_bytes());
+            assert_eq!(&sent[7..13], &[0xAA; 6]); // pubkey_prefix
+            assert_eq!(&sent[13..], b"ab|ver");
+
+            dispatcher_clone
+                .emit(MeshCoreEvent::new(
+                    EventType::MsgSent,
+                    EventPayload::MsgSent(MsgSentInfo {
+                        message_type: 0,
+                        expected_ack: [0; 4],
+                        suggested_timeout: 5000,
+                    }),
+                ))
+                .await;
+        });
+
+        let dest = vec![0xAAu8; PUBLIC_KEY_LEN];
+        let info = handler
+            .send_cmd(dest, "ab|ver", Some(0x6543_2100))
+            .await
+            .unwrap();
+        assert_eq!(info.expected_ack, [0; 4]);
     }
 
     #[tokio::test]
