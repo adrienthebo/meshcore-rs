@@ -1380,9 +1380,14 @@ pub fn parse_status_response(payload: &[u8]) -> Result<StatusResponseFrame> {
 //
 // None of these changes bumped FIRMWARE_VER_CODE so the payload length is the only
 // reliable signal of which fields are present.
+//
+// Servers older than v1.9.0 used byte 7 for other data (room servers sent an
+// unsynced post count), so acl_permissions is only meaningful from v1.9.0+ servers.
 
 /// Minimum length for a LoginSuccess payload (permissions + prefix).
 const LOGIN_SUCCESS_MIN_LEN: usize = 7;
+/// Length of a LoginSuccess payload that includes the server timestamp.
+const LOGIN_SUCCESS_WITH_TIMESTAMP_LEN: usize = 11;
 /// Offset of the public key prefix in a LoginSuccess payload.
 const LOGIN_SUCCESS_PREFIX_OFFSET: usize = 1;
 /// Offset of the server timestamp in a LoginSuccess payload.
@@ -1395,12 +1400,21 @@ const LOGIN_SUCCESS_FIRMWARE_VER_LEVEL_OFFSET: usize = 12;
 /// Parse [`LoginSuccessData`] from a `PacketType::LoginSuccess` payload.
 ///
 /// The LoginSuccess frame supports a variable number of fields based on
-/// the companion client version. In contrast to some other frame parsers
-/// the login success parser allows trailing bytes in case the API changes
-/// again.
+/// the companion client version. Any bytes after the pubkey prefix must
+/// contain a complete server timestamp. In contrast to some other frame
+/// parsers the login success parser allows trailing bytes after the known
+/// fields in case the API changes again.
 pub fn parse_login_success(payload: &[u8]) -> Result<LoginSuccessData> {
-    if payload.len() < LOGIN_SUCCESS_MIN_LEN {
-        return Err(Error::protocol("LoginSuccess payload too short"));
+    let len = payload.len();
+    if len < LOGIN_SUCCESS_MIN_LEN {
+        return Err(Error::protocol(format!(
+            "LoginSuccess payload too short: {len} bytes"
+        )));
+    }
+    if len > LOGIN_SUCCESS_MIN_LEN && len < LOGIN_SUCCESS_WITH_TIMESTAMP_LEN {
+        return Err(Error::protocol(format!(
+            "LoginSuccess server timestamp truncated: {len} bytes"
+        )));
     }
 
     Ok(LoginSuccessData {
@@ -2975,8 +2989,29 @@ mod tests {
 
     #[test]
     fn test_parse_login_success_too_short() {
-        assert!(parse_login_success(&[]).is_err());
-        assert!(parse_login_success(&[0; 6]).is_err());
+        for data in [&[][..], &[0; 6]] {
+            assert!(matches!(
+                parse_login_success(data),
+                Err(Error::Protocol(msg)) if msg.contains("too short")
+            ));
+        }
+    }
+
+    #[test]
+    fn test_parse_login_success_truncated_timestamp() {
+        let mut data = vec![0x01, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        data.extend_from_slice(&1_700_000_000u32.to_le_bytes());
+        assert!(parse_login_success(&data[..7]).is_ok());
+        for len in 8..=10 {
+            assert!(
+                matches!(
+                    parse_login_success(&data[..len]),
+                    Err(Error::Protocol(msg)) if msg.contains("timestamp truncated")
+                ),
+                "len {len}"
+            );
+        }
+        assert!(parse_login_success(&data[..11]).is_ok());
     }
 
     #[test]
