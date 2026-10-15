@@ -142,20 +142,17 @@ pub fn parse_contact(data: &[u8]) -> Result<Contact> {
     let path_bytes_len = if path_byte == 0xFF {
         0
     } else {
-        let path_hash_size = ((path_byte & 0xC0) >> 6) + 1; // bits 6:7
+        let path_hash_size = ((path_byte & 0xC0) >> 6) + 1; // jonesy:allow(overflow) - bits 6:7, at most 3 + 1
         let path_hops = path_byte & 0x3F; // bits 0:5
         path_hops as usize * path_hash_size as usize // jonesy:allow(overflow)
     };
 
-    if path_bytes_len > 64 {
-        // This branch can only be hit when a contact has a malformed
-        // path byte value that would read outside of the path buffer.
-        return Err(Error::protocol(format!(
-            "Contact path too long: {} bytes",
-            path_bytes_len
-        )));
-    }
-    let out_path = data[35..35 + path_bytes_len].to_vec();
+    // Checked read of the fixed path field, avoiding an overflowable offset add.
+    // Errors only on a malformed path byte that would read past the field.
+    let out_path = data[35..35 + 64]
+        .get(..path_bytes_len)
+        .ok_or_else(|| Error::protocol(format!("Contact path too long: {} bytes", path_bytes_len)))?
+        .to_vec();
 
     // The Name is 32 bytes at offset 99
     let adv_name = read_string(data, 99, 32);
