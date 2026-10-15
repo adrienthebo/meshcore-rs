@@ -346,10 +346,14 @@ pub fn parse_device_info(data: &[u8]) -> Result<DeviceInfoData> {
     })
 }
 
-/// Parse status response (52+ bytes)
+/// Parse status response (52 or 56+ bytes)
+///
+/// Repeaters older than `repeater-v1.12.0` omit the trailing
+/// `n_recv_errors:u32`, so `recv_errors` is `None` for a 52-byte status.
+/// Lengths in between are rejected as a truncated `n_recv_errors` field.
 #[allow(deprecated)] // populates StatusData::dup_count
 pub fn parse_status(data: &[u8], sender_prefix: [u8; 6]) -> Result<StatusData> {
-    if data.len() < 52 {
+    if data.len() < 52 || (data.len() > 52 && data.len() < 56) {
         return Err(Error::protocol(format!(
             "Status data too short: {} bytes",
             data.len()
@@ -366,6 +370,9 @@ pub fn parse_status(data: &[u8], sender_prefix: [u8; 6]) -> Result<StatusData> {
     let uptime = read_u32_le(data, 20)?;
     let flood_sent = read_u32_le(data, 24)?;
     let direct_sent = read_u32_le(data, 28)?;
+    let flood_recv = read_u32_le(data, 32)?;
+    let direct_recv = read_u32_le(data, 36)?;
+    let err_events = read_u16_le(data, 40)?;
 
     let snr_raw = read_i16_le(data, 42)?;
     let snr = snr_raw as f32 / 4.0;
@@ -374,6 +381,11 @@ pub fn parse_status(data: &[u8], sender_prefix: [u8; 6]) -> Result<StatusData> {
     let flood_dups = read_u16_le(data, 46)?;
     let dup_count = u32::from(direct_dups) + u32::from(flood_dups);
     let rx_airtime = read_u32_le(data, 48)?;
+    let recv_errors = if data.len() >= 56 {
+        Some(read_u32_le(data, 52)?)
+    } else {
+        None
+    };
 
     Ok(StatusData {
         battery_mv,
@@ -386,11 +398,15 @@ pub fn parse_status(data: &[u8], sender_prefix: [u8; 6]) -> Result<StatusData> {
         uptime,
         flood_sent,
         direct_sent,
+        flood_recv,
+        direct_recv,
+        err_events,
         snr,
         dup_count,
         direct_dups,
         flood_dups,
         rx_airtime,
+        recv_errors,
         sender_prefix,
     })
 }
@@ -1979,18 +1995,38 @@ mod tests {
         assert_eq!(status.uptime, 86400);
         assert_eq!(status.flood_sent, 100);
         assert_eq!(status.direct_sent, 400);
+        assert_eq!(status.flood_recv, 700);
+        assert_eq!(status.direct_recv, 300);
+        assert_eq!(status.err_events, 0x0003);
         assert_eq!(status.snr, -7.5);
         assert_eq!(status.dup_count, 16);
         assert_eq!(status.direct_dups, 7);
         assert_eq!(status.flood_dups, 9);
         assert_eq!(status.rx_airtime, 1800);
+        assert_eq!(status.recv_errors, Some(11));
         assert_eq!(status.sender_prefix, sender);
+    }
+
+    #[test]
+    fn test_parse_status_without_recv_errors() {
+        let data = repeater_stats_bytes();
+        let status = parse_status(&data[..52], [0; 6]).unwrap();
+        assert_eq!(status.rx_airtime, 1800);
+        assert_eq!(status.recv_errors, None);
     }
 
     #[test]
     fn test_parse_status_too_short() {
         let data = vec![0u8; 40];
         assert!(parse_status(&data, [0; 6]).is_err());
+    }
+
+    #[test]
+    fn test_parse_status_rejects_truncated_recv_errors() {
+        let data = repeater_stats_bytes();
+        for len in 53..56 {
+            assert!(parse_status(&data[..len], [0; 6]).is_err(), "len {len}");
+        }
     }
 
     #[test]

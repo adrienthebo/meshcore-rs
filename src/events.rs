@@ -483,6 +483,12 @@ pub struct StatusData {
     pub flood_sent: u32,
     /// Direct packets sent
     pub direct_sent: u32,
+    /// Flood packets received
+    pub flood_recv: u32,
+    /// Direct packets received
+    pub direct_recv: u32,
+    /// Error event flags
+    pub err_events: u16,
     /// SNR (divided by 4)
     pub snr: f32,
     /// Duplicate packet count (`direct_dups + flood_dups`)
@@ -494,6 +500,9 @@ pub struct StatusData {
     pub flood_dups: u16,
     /// RX airtime (seconds)
     pub rx_airtime: u32,
+    /// Receive errors -- `None` on repeaters older than `repeater-v1.12.0`,
+    /// whose status doesn't report this field (52 bytes instead of 56).
+    pub recv_errors: Option<u32>,
     /// Sender public key prefix
     pub sender_prefix: [u8; 6],
 }
