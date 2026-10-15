@@ -183,7 +183,12 @@ impl MessageReader {
         if let Some(req) = request {
             match req.request_type {
                 BinaryReqType::Status => {
-                    if let Ok(status) = parse_status(&data, [0; 6]) {
+                    let sender_prefix = req
+                        .pubkey_prefix
+                        .get(..6)
+                        .and_then(|p| p.try_into().ok())
+                        .unwrap_or([0; 6]);
+                    if let Ok(status) = parse_status(&data, sender_prefix) {
                         MeshCoreEvent::new(EventType::StatusResponse, EventPayload::Status(status))
                     } else {
                         MeshCoreEvent::new(
@@ -2199,6 +2204,44 @@ mod tests {
                 assert_eq!(status.snr, -7.5);
                 assert_eq!(status.rx_airtime, 1800);
                 assert_eq!(status.recv_errors, Some(11));
+                assert_eq!(status.sender_prefix, [0; 6]);
+            }
+            _ => panic!("Expected Status payload"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_rx_binary_response_status_sender_prefix() {
+        let (reader, dispatcher) = create_reader();
+        let mut receiver = dispatcher.receiver();
+
+        let pubkey: Vec<u8> = (1..=32).collect();
+        reader
+            .register_binary_request(
+                &[0x01, 0x02, 0x03, 0x04],
+                BinaryReqType::Status,
+                pubkey,
+                Duration::from_secs(30),
+                HashMap::new(),
+                false,
+            )
+            .await;
+
+        let mut data = vec![PacketType::BinaryResponse as u8];
+        data.push(0x00); // subtype byte
+        data.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]); // matching tag
+        data.extend_from_slice(&repeater_stats_bytes());
+
+        reader.handle_rx(data).await.unwrap();
+
+        let event = tokio::time::timeout(Duration::from_millis(100), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        match event.payload {
+            EventPayload::Status(status) => {
+                assert_eq!(status.sender_prefix, [1, 2, 3, 4, 5, 6]);
             }
             _ => panic!("Expected Status payload"),
         }
