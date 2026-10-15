@@ -475,7 +475,7 @@ pub struct StatusData {
     pub nb_recv: u32,
     /// Number of packets sent
     pub nb_sent: u32,
-    /// Total airtime (ms)
+    /// Total airtime (seconds)
     pub airtime: u32,
     /// Uptime (seconds)
     pub uptime: u32,
@@ -487,7 +487,7 @@ pub struct StatusData {
     pub snr: f32,
     /// Duplicate packet count
     pub dup_count: u32,
-    /// RX airtime (ms)
+    /// RX airtime (seconds)
     pub rx_airtime: u32,
     /// Sender public key prefix
     pub sender_prefix: [u8; 6],

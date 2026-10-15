@@ -366,11 +366,11 @@ pub fn parse_status(data: &[u8], sender_prefix: [u8; 6]) -> Result<StatusData> {
     let flood_sent = read_u32_le(data, 24)?;
     let direct_sent = read_u32_le(data, 28)?;
 
-    let snr_raw = data[32] as i8;
+    let snr_raw = read_i16_le(data, 42)?;
     let snr = snr_raw as f32 / 4.0;
 
     let dup_count = read_u32_le(data, 36)?;
-    let rx_airtime = read_u32_le(data, 40)?;
+    let rx_airtime = read_u32_le(data, 48)?;
 
     Ok(StatusData {
         battery_mv,
@@ -1932,38 +1932,36 @@ mod tests {
         assert!(parse_self_info(&data).is_err());
     }
 
+    /// A `RepeaterStats` (simple_repeater/MyMesh.h) as the firmware sends
+    /// it, with every field set to a distinct value.
+    fn repeater_stats_bytes() -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&4200u16.to_le_bytes()); // 0: batt_milli_volts
+        data.extend_from_slice(&5u16.to_le_bytes()); // 2: curr_tx_queue_len
+        data.extend_from_slice(&(-90i16).to_le_bytes()); // 4: noise_floor
+        data.extend_from_slice(&(-50i16).to_le_bytes()); // 6: last_rssi
+        data.extend_from_slice(&1000u32.to_le_bytes()); // 8: n_packets_recv
+        data.extend_from_slice(&500u32.to_le_bytes()); // 12: n_packets_sent
+        data.extend_from_slice(&3600u32.to_le_bytes()); // 16: total_air_time_secs
+        data.extend_from_slice(&86400u32.to_le_bytes()); // 20: total_up_time_secs
+        data.extend_from_slice(&100u32.to_le_bytes()); // 24: n_sent_flood
+        data.extend_from_slice(&400u32.to_le_bytes()); // 28: n_sent_direct
+        data.extend_from_slice(&700u32.to_le_bytes()); // 32: n_recv_flood
+        data.extend_from_slice(&300u32.to_le_bytes()); // 36: n_recv_direct
+        data.extend_from_slice(&0x0003u16.to_le_bytes()); // 40: err_events
+        data.extend_from_slice(&(-30i16).to_le_bytes()); // 42: last_snr x4
+        data.extend_from_slice(&7u16.to_le_bytes()); // 44: n_direct_dups
+        data.extend_from_slice(&9u16.to_le_bytes()); // 46: n_flood_dups
+        data.extend_from_slice(&1800u32.to_le_bytes()); // 48: total_rx_air_time_secs
+        data.extend_from_slice(&11u32.to_le_bytes()); // 52: n_recv_errors
+        assert_eq!(data.len(), 56);
+        data
+    }
+
     #[test]
     fn test_parse_status() {
-        let mut data = vec![0u8; 52];
-        // battery_mv at 0 (4.2V = 4200mV)
-        data[0..2].copy_from_slice(&4200u16.to_le_bytes());
-        // tx_queue_len at 2
-        data[2..4].copy_from_slice(&5u16.to_le_bytes());
-        // noise_floor at 4
-        data[4..6].copy_from_slice(&(-90i16).to_le_bytes());
-        // last_rssi at 6
-        data[6..8].copy_from_slice(&(-50i16).to_le_bytes());
-        // nb_recv at 8
-        data[8..12].copy_from_slice(&1000u32.to_le_bytes());
-        // nb_sent at 12
-        data[12..16].copy_from_slice(&500u32.to_le_bytes());
-        // airtime at 16
-        data[16..20].copy_from_slice(&3600000u32.to_le_bytes());
-        // uptime at 20
-        data[20..24].copy_from_slice(&86400u32.to_le_bytes());
-        // flood_sent at 24
-        data[24..28].copy_from_slice(&100u32.to_le_bytes());
-        // direct_sent at 28
-        data[28..32].copy_from_slice(&400u32.to_le_bytes());
-        // snr at 32 (raw, multiplied by 4)
-        data[32] = 40; // SNR = 10.0
-                       // dup_count at 36
-        data[36..40].copy_from_slice(&10u32.to_le_bytes());
-        // rx_airtime at 40
-        data[40..44].copy_from_slice(&1800000u32.to_le_bytes());
-
         let sender = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06];
-        let status = parse_status(&data, sender).unwrap();
+        let status = parse_status(&repeater_stats_bytes(), sender).unwrap();
 
         assert_eq!(status.battery_mv, 4200);
         assert_eq!(status.tx_queue_len, 5);
@@ -1971,8 +1969,12 @@ mod tests {
         assert_eq!(status.last_rssi, -50);
         assert_eq!(status.nb_recv, 1000);
         assert_eq!(status.nb_sent, 500);
+        assert_eq!(status.airtime, 3600);
         assert_eq!(status.uptime, 86400);
-        assert_eq!(status.snr, 10.0);
+        assert_eq!(status.flood_sent, 100);
+        assert_eq!(status.direct_sent, 400);
+        assert_eq!(status.snr, -7.5);
+        assert_eq!(status.rx_airtime, 1800);
         assert_eq!(status.sender_prefix, sender);
     }
 
