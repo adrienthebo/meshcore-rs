@@ -197,16 +197,15 @@ pub fn parse_contact(data: &[u8]) -> Result<Contact> {
         path_bytes_len
     };
 
-    if path_bytes_len > OUT_PATH_LEN {
-        // This branch can only be hit when a contact has a malformed
-        // path byte value that would read outside of the path buffer.
-        return Err(Error::protocol(format!(
-            "Contact path too long: {} bytes",
-            path_bytes_len
-        )));
-    }
-
-    let out_path = data[CONTACT_OUT_PATH_OFFSET..CONTACT_OUT_PATH_OFFSET + path_bytes_len].to_vec();
+    let out_path_end = CONTACT_OUT_PATH_OFFSET
+        .checked_add(path_bytes_len)
+        // Functionally unreachable; `decode_path_byte` handles this error
+        .ok_or_else(|| Error::protocol("Contact path length overflow"))?;
+    let out_path = data
+        .get(CONTACT_OUT_PATH_OFFSET..out_path_end)
+        // Functionally unreachable; `decode_path_byte` + min packet length prevents this
+        .ok_or_else(|| Error::protocol("Contact path truncated"))?
+        .to_vec();
 
     // The Name is 32 bytes at offset 99
     let adv_name = read_string(data, 99, 32);
