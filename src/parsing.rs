@@ -127,7 +127,7 @@ const PATH_BYTE_SIZE_MASK: u8 = 0b11_000000;
 /// The low 6 boths of path_byte indicate the hop count.
 const PATH_BYTE_LENGTH_MASK: u8 = 0b00_111111;
 
-/// The buffer size of an out_path. Note that the number of path hashes within
+/// The max buffer size of an out_path. Note that the number of path hashes within
 /// this buffer will be 1..3 so capacity != hops
 const OUT_PATH_LEN: usize = 64;
 
@@ -165,12 +165,26 @@ fn decode_path_byte(path_byte: u8) -> Result<(u8, u8, usize)> {
     Ok((path_hash_size, path_hops, path_bytes_len))
 }
 
+// --- Contact/new advert wire-format layout ---
+//
+// Layout: [public_key: 32][contact_type: 1][flags: 1][path_byte: 1][out_path: 64]
+// [contact_name: 32][last_advert: u32][lat: i32][long: i32][last_modified: u32]
+
+const CONTACT_PUBLIC_KEY_OFFSET: usize = 0;
+const CONTACT_TYPE_OFFSET: usize = CONTACT_PUBLIC_KEY_OFFSET + PUBLIC_KEY_LEN;
+const CONTACT_FLAGS_OFFSET: usize = CONTACT_TYPE_OFFSET + 1;
+const CONTACT_PATH_BYTE_OFFSET: usize = CONTACT_FLAGS_OFFSET + 1;
+const CONTACT_OUT_PATH_OFFSET: usize = CONTACT_PATH_BYTE_OFFSET + 1;
+const CONTACT_NAME_OFFSET: usize = CONTACT_OUT_PATH_OFFSET + OUT_PATH_LEN;
+const CONTACT_NAME_LEN: usize = 32;
+const CONTACT_LAST_ADVERT_OFFSET: usize = CONTACT_NAME_OFFSET + CONTACT_NAME_LEN;
+const CONTACT_LAT_OFFSET: usize = CONTACT_LAST_ADVERT_OFFSET + 4;
+const CONTACT_LON_OFFSET: usize = CONTACT_LAT_OFFSET + 4;
+
 /// Where `lastmod` sits in the firmware's contact frame (`writeContactRespFrame`):
 /// the last field, so the frame is 147 payload bytes.
-const CONTACT_LASTMOD_OFFSET: usize = 143;
+const CONTACT_LASTMOD_OFFSET: usize = CONTACT_LON_OFFSET + 4;
 const CONTACT_LEN_WITH_LASTMOD: usize = CONTACT_LASTMOD_OFFSET + 4;
-const CONTACT_PATH_BYTE_OFFSET: usize = 34;
-const CONTACT_OUT_PATH_OFFSET: usize = 35;
 
 /// Parse a contact from raw bytes. A frame from firmware older than `lastmod`
 /// is 145 bytes and reads `lastmod` as 0.
@@ -182,9 +196,9 @@ pub fn parse_contact(data: &[u8]) -> Result<Contact> {
         )));
     }
 
-    let public_key: PublicKey = read_bytes(data, 0)?;
-    let contact_type = data[32];
-    let flags = data[33];
+    let public_key: PublicKey = read_bytes(data, CONTACT_PUBLIC_KEY_OFFSET)?;
+    let contact_type = data[CONTACT_TYPE_OFFSET];
+    let flags = data[CONTACT_FLAGS_OFFSET];
     let path_byte = data[CONTACT_PATH_BYTE_OFFSET];
     let path_len = path_byte as i8;
 
@@ -207,13 +221,12 @@ pub fn parse_contact(data: &[u8]) -> Result<Contact> {
         .ok_or_else(|| Error::protocol("Contact path truncated"))?
         .to_vec();
 
-    // The Name is 32 bytes at offset 99
-    let adv_name = read_string(data, 99, 32);
+    let adv_name = read_string(data, CONTACT_NAME_OFFSET, CONTACT_NAME_LEN);
 
     // Timestamps and coordinates
-    let last_advert = read_u32_le(data, 131)?;
-    let adv_lat = read_i32_le(data, 135)?;
-    let adv_lon = read_i32_le(data, 139)?;
+    let last_advert = read_u32_le(data, CONTACT_LAST_ADVERT_OFFSET)?;
+    let adv_lat = read_i32_le(data, CONTACT_LAT_OFFSET)?;
+    let adv_lon = read_i32_le(data, CONTACT_LON_OFFSET)?;
 
     let last_modification_timestamp = if data.len() >= CONTACT_LEN_WITH_LASTMOD {
         read_u32_le(data, CONTACT_LASTMOD_OFFSET).unwrap_or(0)
