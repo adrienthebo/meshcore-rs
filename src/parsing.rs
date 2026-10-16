@@ -167,8 +167,9 @@ fn decode_path_byte(path_byte: u8) -> Result<(u8, u8, usize)> {
 
 // --- Contact/new advert wire-format layout ---
 //
+// Written by the companion firmware's `writeContactRespFrame`.
 // Layout: [public_key: 32][contact_type: 1][flags: 1][path_byte: 1][out_path: 64]
-// [contact_name: 32][last_advert: u32][lat: i32][long: i32][last_modified: u32]
+// [contact_name: 32][last_advert: u32][lat: i32][lon: i32][last_modified: u32]
 
 const CONTACT_PUBLIC_KEY_OFFSET: usize = 0;
 const CONTACT_TYPE_OFFSET: usize = CONTACT_PUBLIC_KEY_OFFSET + PUBLIC_KEY_LEN;
@@ -180,17 +181,12 @@ const CONTACT_NAME_LEN: usize = 32;
 const CONTACT_LAST_ADVERT_OFFSET: usize = CONTACT_NAME_OFFSET + CONTACT_NAME_LEN;
 const CONTACT_LAT_OFFSET: usize = CONTACT_LAST_ADVERT_OFFSET + 4;
 const CONTACT_LON_OFFSET: usize = CONTACT_LAT_OFFSET + 4;
-
-/// Where `lastmod` sits in the firmware's contact frame (`writeContactRespFrame`):
-/// the last field, so the frame is 147 payload bytes.
 const CONTACT_LASTMOD_OFFSET: usize = CONTACT_LON_OFFSET + 4;
-const CONTACT_LEN_WITH_LASTMOD: usize = CONTACT_LASTMOD_OFFSET + 4;
+const CONTACT_LEN: usize = CONTACT_LASTMOD_OFFSET + 4;
 
-/// Parse a contact from raw bytes. A frame that ends before `lastmod` reads
-/// `lastmod` as 0. The companion firmware's `writeContactRespFrame` has always
-/// sent `lastmod`, so this only accepts truncated frames from other senders.
+/// Parse a contact from raw bytes.
 pub fn parse_contact(data: &[u8]) -> Result<Contact> {
-    if data.len() < CONTACT_LASTMOD_OFFSET {
+    if data.len() < CONTACT_LEN {
         return Err(Error::protocol(format!(
             "Contact data too short: {} bytes",
             data.len()
@@ -229,11 +225,7 @@ pub fn parse_contact(data: &[u8]) -> Result<Contact> {
     let adv_lat = read_i32_le(data, CONTACT_LAT_OFFSET)?;
     let adv_lon = read_i32_le(data, CONTACT_LON_OFFSET)?;
 
-    let last_modification_timestamp = if data.len() >= CONTACT_LEN_WITH_LASTMOD {
-        read_u32_le(data, CONTACT_LASTMOD_OFFSET).unwrap_or(0)
-    } else {
-        0
-    };
+    let last_modification_timestamp = read_u32_le(data, CONTACT_LASTMOD_OFFSET)?;
 
     Ok(Contact {
         public_key,
@@ -1911,7 +1903,7 @@ mod tests {
     #[test]
     fn test_parse_contact() {
         // The firmware's frame: lastmod is the last field.
-        let mut data = vec![0u8; CONTACT_LEN_WITH_LASTMOD];
+        let mut data = vec![0u8; CONTACT_LEN];
         data[CONTACT_PUBLIC_KEY_OFFSET..][..6]
             .copy_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
         data[CONTACT_TYPE_OFFSET] = 1;
@@ -1924,8 +1916,7 @@ mod tests {
         data[CONTACT_LAT_OFFSET..CONTACT_LON_OFFSET].copy_from_slice(&37774900i32.to_le_bytes());
         data[CONTACT_LON_OFFSET..CONTACT_LASTMOD_OFFSET]
             .copy_from_slice(&(-122419400i32).to_le_bytes());
-        data[CONTACT_LASTMOD_OFFSET..CONTACT_LEN_WITH_LASTMOD]
-            .copy_from_slice(&2000u32.to_le_bytes());
+        data[CONTACT_LASTMOD_OFFSET..CONTACT_LEN].copy_from_slice(&2000u32.to_le_bytes());
 
         let contact = parse_contact(&data).unwrap();
         assert_eq!(contact.contact_type, 1);
@@ -1940,19 +1931,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_contact_without_lastmod_reads_zero() {
-        let mut data = vec![0u8; CONTACT_LASTMOD_OFFSET];
-        data[CONTACT_TYPE_OFFSET] = 1;
-        data[CONTACT_LAST_ADVERT_OFFSET..CONTACT_LAT_OFFSET]
-            .copy_from_slice(&1000u32.to_le_bytes());
-
-        let contact = parse_contact(&data).unwrap();
-        assert_eq!(contact.last_modification_timestamp, 0);
-    }
-
-    #[test]
     fn test_parse_contact_path_with_zero_hop_hash() {
-        let mut data = vec![0u8; CONTACT_LEN_WITH_LASTMOD];
+        let mut data = vec![0u8; CONTACT_LEN];
         // path_len: 2 hops of 1-byte hashes
         data[CONTACT_PATH_BYTE_OFFSET] = 2;
         // MeshCore reserves 0x00 and 0xFF as the first public key byte, so a
@@ -1966,7 +1946,7 @@ mod tests {
 
     #[test]
     fn test_parse_contact_path_with_two_byte_hashes() {
-        let mut data = vec![0u8; CONTACT_LEN_WITH_LASTMOD];
+        let mut data = vec![0u8; CONTACT_LEN];
         // path_len: 2 hops of 2-byte hashes (bits 6-7 = 0b01 -> +1 = 2)
         data[CONTACT_PATH_BYTE_OFFSET] = 0b01_000010;
         data[CONTACT_OUT_PATH_OFFSET..][..4].copy_from_slice(&[0x12, 0x00, 0x00, 0x34]);
@@ -1977,7 +1957,7 @@ mod tests {
 
     #[test]
     fn test_parse_contact_path_with_three_byte_hashes() {
-        let mut data = vec![0u8; CONTACT_LEN_WITH_LASTMOD];
+        let mut data = vec![0u8; CONTACT_LEN];
         // path_len: 2 hops of 3-byte hashes (bits 6-7 = 0b10 -> +1 = 3)
         data[CONTACT_PATH_BYTE_OFFSET] = 0b10_000010;
         data[CONTACT_OUT_PATH_OFFSET..][..6].copy_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
@@ -1990,7 +1970,7 @@ mod tests {
 
     #[test]
     fn test_parse_contact_path_with_max_one_byte_hops() {
-        let mut data = vec![0u8; CONTACT_LEN_WITH_LASTMOD];
+        let mut data = vec![0u8; CONTACT_LEN];
         // path_len: 63 hops of 1-byte hashes, the most the hop bits can hold
         data[CONTACT_PATH_BYTE_OFFSET] = 0b00_111111;
         data[CONTACT_OUT_PATH_OFFSET..][..63].fill(0x11);
@@ -2003,7 +1983,7 @@ mod tests {
 
     #[test]
     fn test_parse_contact_path_filling_path_field() {
-        let mut data = vec![0u8; CONTACT_LEN_WITH_LASTMOD];
+        let mut data = vec![0u8; CONTACT_LEN];
         // path_len: 32 hops of 2-byte hashes = 64 bytes, the whole path field
         data[CONTACT_PATH_BYTE_OFFSET] = 0b01_100000;
         data[CONTACT_OUT_PATH_OFFSET..CONTACT_NAME_OFFSET].fill(0x33);
@@ -2014,7 +1994,7 @@ mod tests {
 
     #[test]
     fn test_parse_contact_unknown_path_is_empty() {
-        let mut data = vec![0u8; CONTACT_LEN_WITH_LASTMOD];
+        let mut data = vec![0u8; CONTACT_LEN];
         data[CONTACT_PATH_BYTE_OFFSET] = OUT_PATH_UNKNOWN;
         data[CONTACT_OUT_PATH_OFFSET] = 0x0A;
 
@@ -2025,7 +2005,7 @@ mod tests {
 
     #[test]
     fn test_parse_contact_path_too_long_errors() {
-        let mut data = vec![0u8; CONTACT_LEN_WITH_LASTMOD];
+        let mut data = vec![0u8; CONTACT_LEN];
         // path_len: 63 hops of 3-byte hashes = 189 bytes, past the 64-byte field
         data[CONTACT_PATH_BYTE_OFFSET] = 0xBF;
 
@@ -2054,7 +2034,7 @@ mod tests {
 
     #[test]
     fn test_parse_contact_four_byte_hashes_error() {
-        let mut data = vec![0u8; CONTACT_LEN_WITH_LASTMOD];
+        let mut data = vec![0u8; CONTACT_LEN];
         // path_len: 1 hop of 4-byte hashes (bits 6-7 = 0b11), reserved by firmware
         data[CONTACT_PATH_BYTE_OFFSET] = 0b11_000001;
 
@@ -2066,7 +2046,7 @@ mod tests {
 
     #[test]
     fn test_parse_contact_too_short() {
-        let data = vec![0u8; 100];
+        let data = vec![0u8; CONTACT_LEN - 1];
         assert!(parse_contact(&data).is_err());
     }
 
