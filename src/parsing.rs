@@ -177,19 +177,20 @@ const OUT_PATH_LEN: usize = 64;
 // Bit layout: [hash_size: bits 7:6][hop_count: bits 5:0]
 
 /// The high 2 bits of path_byte indicate the path hash size
-const PATH_BYTE_SIZE_MASK: u8 = 0xC0;
+const PATH_BYTE_SIZE_MASK: u8 = 0b11_000000;
 /// The low 6 boths of path_byte indicate the hop count.
-const PATH_BYTE_LENGTH_MASK: u8 = 0x3F;
+const PATH_BYTE_LENGTH_MASK: u8 = 0b00_111111;
 
-/// Decode and validate a contact out_path byte.
+/// Decode and validate a path byte into `(hash_size, hops, bytes_len)`.
+/// `bytes_len` is `hops * hash_size` and never exceeds `OUT_PATH_LEN`.
+///
+/// Errors on the reserved 4-byte hash size and on more hops than fit in
+/// `OUT_PATH_LEN`, as firmware's `Packet::isValidPathLen` does.
 fn decode_path_byte(path_byte: u8) -> Result<(u8, u8, usize)> {
     let encoded_path_hash = (path_byte & PATH_BYTE_SIZE_MASK) >> 6;
     let path_hops = path_byte & PATH_BYTE_LENGTH_MASK;
 
     let (path_hash_size, max_hops): (u8, u8) = match encoded_path_hash {
-        // With a 1 byte path hash we have a 64 byte buffer but the lower
-        // 6 bits of path_byte can only represent (1 << 6) - 1 = 63. The last byte
-        // is unusable but we opt to match the firmware impl for consistency.
         0 => (1, OUT_PATH_LEN as u8),
         1 => (2, (OUT_PATH_LEN / 2) as u8),
         2 => (3, (OUT_PATH_LEN / 3) as u8),
