@@ -186,10 +186,11 @@ const CONTACT_LON_OFFSET: usize = CONTACT_LAT_OFFSET + 4;
 const CONTACT_LASTMOD_OFFSET: usize = CONTACT_LON_OFFSET + 4;
 const CONTACT_LEN_WITH_LASTMOD: usize = CONTACT_LASTMOD_OFFSET + 4;
 
-/// Parse a contact from raw bytes. A frame from firmware older than `lastmod`
-/// is 145 bytes and reads `lastmod` as 0.
+/// Parse a contact from raw bytes. A frame that ends before `lastmod` reads
+/// `lastmod` as 0. The companion firmware's `writeContactRespFrame` has always
+/// sent `lastmod`, so this only accepts truncated frames from other senders.
 pub fn parse_contact(data: &[u8]) -> Result<Contact> {
-    if data.len() < 145 {
+    if data.len() < CONTACT_LASTMOD_OFFSET {
         return Err(Error::protocol(format!(
             "Contact data too short: {} bytes",
             data.len()
@@ -1947,7 +1948,7 @@ mod tests {
 
     #[test]
     fn test_parse_contact_without_lastmod_reads_zero() {
-        let mut data = vec![0u8; 145];
+        let mut data = vec![0u8; CONTACT_LASTMOD_OFFSET];
         data[32] = 1;
         data[131..135].copy_from_slice(&1000u32.to_le_bytes());
 
