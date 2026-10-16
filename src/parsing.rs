@@ -176,7 +176,7 @@ const PATH_BYTE_SIZE_MASK: u8 = 0b11_000000;
 /// The low 6 boths of path_byte indicate the hop count.
 const PATH_BYTE_LENGTH_MASK: u8 = 0b00_111111;
 
-/// The buffer size of an out_path. Note that the number of path hashes within
+/// The max buffer size of an out_path. Note that the number of path hashes within
 /// this buffer will be 1..3 so capacity != hops
 const OUT_PATH_LEN: usize = 64;
 
@@ -214,6 +214,7 @@ fn decode_path_byte(path_byte: u8) -> Result<(u8, u8, usize)> {
     Ok((path_hash_size, path_hops, path_bytes_len))
 }
 
+
 /// Parse a contact from raw bytes. A frame from firmware older than `lastmod`
 /// is 145 bytes and reads `lastmod` as 0.
 pub fn parse_contact(data: &[u8]) -> Result<Contact> {
@@ -239,13 +240,12 @@ pub fn parse_contact(data: &[u8]) -> Result<Contact> {
         .map(<[u8]>::to_vec)
         .unwrap_or_default();
 
-    // The Name is 32 bytes at offset 99
-    let adv_name = read_string(data, 99, 32);
+    let adv_name = read_string(data, CONTACT_NAME_OFFSET, CONTACT_NAME_LEN);
 
     // Timestamps and coordinates
-    let last_advert = read_u32_le(data, 131)?;
-    let adv_lat = read_i32_le(data, 135)?;
-    let adv_lon = read_i32_le(data, 139)?;
+    let last_advert = read_u32_le(data, CONTACT_LAST_ADVERT_OFFSET)?;
+    let adv_lat = read_i32_le(data, CONTACT_LAT_OFFSET)?;
+    let adv_lon = read_i32_le(data, CONTACT_LON_OFFSET)?;
 
     let last_modification_timestamp = if data.len() >= CONTACT_LEN_WITH_LASTMOD {
         read_u32_le(data, CONTACT_LASTMOD_OFFSET).unwrap_or(0)
