@@ -118,17 +118,6 @@ pub fn read_bytes<const N: usize>(data: &[u8], offset: usize) -> Result<[u8; N]>
     Ok(arr)
 }
 
-/// Where `lastmod` sits in the firmware's contact frame (`writeContactRespFrame`):
-/// the last field, so the frame is 147 payload bytes.
-const CONTACT_LASTMOD_OFFSET: usize = 143;
-const CONTACT_LEN_WITH_LASTMOD: usize = CONTACT_LASTMOD_OFFSET + 4;
-const CONTACT_PATH_BYTE_OFFSET: usize = 34;
-const CONTACT_OUT_PATH_OFFSET: usize = 35;
-
-/// The buffer size of an out_path. Note that the number of path hashes within
-/// this buffer will be 1..3 so capacity != hops
-const OUT_PATH_LEN: usize = 64;
-
 // --- Path byte encoding ---
 //
 // Bit layout: [hash_size: bits 7:6][hop_count: bits 5:0]
@@ -137,6 +126,10 @@ const OUT_PATH_LEN: usize = 64;
 const PATH_BYTE_SIZE_MASK: u8 = 0b11_000000;
 /// The low 6 boths of path_byte indicate the hop count.
 const PATH_BYTE_LENGTH_MASK: u8 = 0b00_111111;
+
+/// The buffer size of an out_path. Note that the number of path hashes within
+/// this buffer will be 1..3 so capacity != hops
+const OUT_PATH_LEN: usize = 64;
 
 /// Decode and validate a path byte into `(hash_size, hops, bytes_len)`.
 /// `bytes_len` is `hops * hash_size` and never exceeds `OUT_PATH_LEN`.
@@ -171,6 +164,13 @@ fn decode_path_byte(path_byte: u8) -> Result<(u8, u8, usize)> {
     let path_bytes_len = usize::from(path_hops).saturating_mul(usize::from(path_hash_size));
     Ok((path_hash_size, path_hops, path_bytes_len))
 }
+
+/// Where `lastmod` sits in the firmware's contact frame (`writeContactRespFrame`):
+/// the last field, so the frame is 147 payload bytes.
+const CONTACT_LASTMOD_OFFSET: usize = 143;
+const CONTACT_LEN_WITH_LASTMOD: usize = CONTACT_LASTMOD_OFFSET + 4;
+const CONTACT_PATH_BYTE_OFFSET: usize = 34;
+const CONTACT_OUT_PATH_OFFSET: usize = 35;
 
 /// Parse a contact from raw bytes. A frame from firmware older than `lastmod`
 /// is 145 bytes and reads `lastmod` as 0.
