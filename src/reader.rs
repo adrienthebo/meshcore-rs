@@ -207,7 +207,7 @@ impl MessageReader {
                     let pk_plen = req
                         .context
                         .get("pubkey_prefix_length")
-                        .and_then(|s| s.parse::<usize>().ok())
+                        .and_then(|s| s.parse::<usize>().ok()) // jonesy:allow(bounds) - inlined parse_neighbours indexing
                         .unwrap_or(4);
                     if let Ok(neighbours) = parse_neighbours(&data, pk_plen) {
                         MeshCoreEvent::new(
