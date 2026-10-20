@@ -165,12 +165,15 @@ impl PathByte {
 
 /// Where the path byte and the route sit in the firmware's contact frame
 /// (`writeContactRespFrame`): the route field is always `MAX_PATH_LEN` bytes.
-const CONTACT_PATH_LEN_OFFSET: usize = 34;
+const CONTACT_PUBLIC_KEY_OFFSET: usize = 0;
+const CONTACT_TYPE_OFFSET: usize = CONTACT_PUBLIC_KEY_OFFSET + PUBLIC_KEY_LEN;
+const CONTACT_FLAGS_OFFSET: usize = CONTACT_TYPE_OFFSET + 1;
+const CONTACT_PATH_LEN_OFFSET: usize = CONTACT_FLAGS_OFFSET + 1;
+#[cfg(test)]
 const CONTACT_PATH_BYTE_OFFSET: usize = CONTACT_PATH_LEN_OFFSET;
 const CONTACT_OUT_PATH_OFFSET: usize = CONTACT_PATH_LEN_OFFSET + 1;
 const CONTACT_NAME_OFFSET: usize = CONTACT_OUT_PATH_OFFSET + MAX_PATH_LEN;
 const CONTACT_NAME_LEN: usize = 32;
-const CONTACT_TYPE_OFFSET: usize = 32;
 const CONTACT_LAST_ADVERT_OFFSET: usize = CONTACT_NAME_OFFSET + CONTACT_NAME_LEN;
 const CONTACT_LAT_OFFSET: usize = CONTACT_LAST_ADVERT_OFFSET + 4;
 const CONTACT_LON_OFFSET: usize = CONTACT_LAT_OFFSET + 4;
@@ -180,49 +183,55 @@ const CONTACT_LASTMOD_OFFSET: usize = 143;
 const CONTACT_LEN_WITH_LASTMOD: usize = CONTACT_LASTMOD_OFFSET + 4;
 const CONTACT_LEN: usize = CONTACT_LEN_WITH_LASTMOD;
 /// A contact path_byte sentinel indicating that this contact doesn't have a direct path
+#[cfg(test)]
 const OUT_PATH_UNKNOWN: u8 = PathByte::UNKNOWN.0;
 
-// --- Path byte encoding ---
-//
-// Bit layout: [hash_size: bits 7:6][hop_count: bits 5:0]
+// --- Path byte encoding (test helpers) ---
 
-/// The high 2 bits of path_byte indicate the path hash size
-const PATH_BYTE_SIZE_MASK: u8 = 0b11_000000;
-/// The low 6 bits of path_byte indicate the hop count.
-const PATH_BYTE_LENGTH_MASK: u8 = 0b00_111111;
+#[cfg(test)]
+mod path_byte_encoding {
+    use super::*;
 
-/// Decode and validate a path byte into `(hash_size, hops, bytes_len)`.
-/// `bytes_len` is `hops * hash_size` and never exceeds `MAX_PATH_LEN`.
-///
-/// Errors on the reserved 4-byte hash size and on more hops than fit in
-/// `MAX_PATH_LEN`, as firmware's `Packet::isValidPathLen` does.
-fn decode_path_byte(path_byte: u8) -> Result<(u8, u8, usize)> {
-    let encoded_path_hash = (path_byte & PATH_BYTE_SIZE_MASK) >> 6;
-    let path_hops = path_byte & PATH_BYTE_LENGTH_MASK;
+    // Bit layout: [hash_size: bits 7:6][hop_count: bits 5:0]
 
-    let (path_hash_size, max_hops): (u8, u8) = match encoded_path_hash {
-        0 => (1, MAX_PATH_LEN as u8),
-        1 => (2, (MAX_PATH_LEN / 2) as u8),
-        2 => (3, (MAX_PATH_LEN / 3) as u8),
-        // path_hash_size=4 is reserved
-        _ => {
+    /// The high 2 bits of path_byte indicate the path hash size
+    const PATH_BYTE_SIZE_MASK: u8 = 0b11_000000;
+    /// The low 6 bits of path_byte indicate the hop count.
+    const PATH_BYTE_LENGTH_MASK: u8 = 0b00_111111;
+
+    /// Decode and validate a path byte into `(hash_size, hops, bytes_len)`.
+    /// `bytes_len` is `hops * hash_size` and never exceeds `MAX_PATH_LEN`.
+    ///
+    /// Errors on the reserved 4-byte hash size and on more hops than fit in
+    /// `MAX_PATH_LEN`, as firmware's `Packet::isValidPathLen` does.
+    pub fn decode_path_byte(path_byte: u8) -> Result<(u8, u8, usize)> {
+        let encoded_path_hash = (path_byte & PATH_BYTE_SIZE_MASK) >> 6;
+        let path_hops = path_byte & PATH_BYTE_LENGTH_MASK;
+
+        let (path_hash_size, max_hops): (u8, u8) = match encoded_path_hash {
+            0 => (1, MAX_PATH_LEN as u8),
+            1 => (2, (MAX_PATH_LEN / 2) as u8),
+            2 => (3, (MAX_PATH_LEN / 3) as u8),
+            // path_hash_size=4 is reserved
+            _ => {
+                return Err(Error::protocol(format!(
+                    "Path uses reserved 4-byte hash size: path byte {:#04x}",
+                    path_byte
+                )))
+            }
+        };
+        if path_hops > max_hops {
+            // We explicitly calculated the max out_len based on the path hash
+            // size so that we can provide a more specific error message.
             return Err(Error::protocol(format!(
-                "Path uses reserved 4-byte hash size: path byte {:#04x}",
-                path_byte
-            )))
+                "Path has {} hops of {}-byte hashes, max is {}: path byte {:#04x}",
+                path_hops, path_hash_size, max_hops, path_byte
+            )));
         }
-    };
-    if path_hops > max_hops {
-        // We explicitly calculated the max out_len based on the path hash
-        // size so that we can provide a more specific error message.
-        return Err(Error::protocol(format!(
-            "Path has {} hops of {}-byte hashes, max is {}: path byte {:#04x}",
-            path_hops, path_hash_size, max_hops, path_byte
-        )));
+        // At most 64 bytes after the hop check; saturating_mul keeps it panic-free.
+        let path_bytes_len = usize::from(path_hops).saturating_mul(usize::from(path_hash_size));
+        Ok((path_hash_size, path_hops, path_bytes_len))
     }
-    // At most 64 bytes after the hop check; saturating_mul keeps it panic-free.
-    let path_bytes_len = usize::from(path_hops).saturating_mul(usize::from(path_hash_size));
-    Ok((path_hash_size, path_hops, path_bytes_len))
 }
 
 /// Parse a contact from raw bytes.
@@ -234,9 +243,9 @@ pub fn parse_contact(data: &[u8]) -> Result<Contact> {
         )));
     }
 
-    let public_key: PublicKey = read_bytes(data, 0)?;
-    let contact_type = data[32];
-    let flags = data[33];
+    let public_key: PublicKey = read_bytes(data, CONTACT_PUBLIC_KEY_OFFSET)?;
+    let contact_type = data[CONTACT_TYPE_OFFSET];
+    let flags = data[CONTACT_FLAGS_OFFSET];
     let path_byte = PathByte(data[CONTACT_PATH_LEN_OFFSET]);
     let path_len = path_byte.0 as i8;
 
@@ -1730,6 +1739,7 @@ pub fn parse_path_discovery_response(payload: &[u8]) -> Result<PathDiscoveryResp
 
 #[cfg(test)]
 mod tests {
+    use super::path_byte_encoding::decode_path_byte;
     use super::*;
     use std::assert_matches;
 
@@ -2079,15 +2089,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_contact_path_too_long_errors() {
+    fn test_parse_contact_path_too_long_yields_empty() {
         let mut data = vec![0u8; CONTACT_LEN];
-        // path_len: 63 hops of 3-byte hashes = 189 bytes, past the 64-byte field
+        // path_len: 63 hops of 3-byte hashes = 189 bytes, past the 64-byte field.
+        // PathByte::route_len() returns None for oversize paths, so out_path is empty.
         data[CONTACT_PATH_BYTE_OFFSET] = 0xBF;
 
-        let err = parse_contact(&data).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("Path has 63 hops of 3-byte hashes, max is 21: path byte 0xbf"));
+        let contact = parse_contact(&data).unwrap();
+        assert!(contact.out_path.is_empty());
     }
 
     #[test]
@@ -2108,15 +2117,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_contact_four_byte_hashes_error() {
+    fn test_parse_contact_four_byte_hashes_yields_empty() {
         let mut data = vec![0u8; CONTACT_LEN];
-        // path_len: 1 hop of 4-byte hashes (bits 6-7 = 0b11), reserved by firmware
+        // path_len: 1 hop of 4-byte hashes (bits 6-7 = 0b11), reserved by firmware.
+        // PathByte::route_len() returns None for the reserved hash size, so out_path is empty.
         data[CONTACT_PATH_BYTE_OFFSET] = 0b11_000001;
 
-        let err = parse_contact(&data).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("Path uses reserved 4-byte hash size: path byte 0xc1"));
+        let contact = parse_contact(&data).unwrap();
+        assert!(contact.out_path.is_empty());
     }
 
     #[test]
